@@ -134,6 +134,28 @@
             z-index: 10;
         }
         
+        #cache-status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #4CAF50;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 11px;
+            z-index: 10;
+            display: none;
+        }
+        
+        #cache-status.cached {
+            color: #4CAF50;
+        }
+        
+        #cache-status.downloading {
+            color: #FFC107;
+        }
+        
         .loading {
             color: white;
             font-size: 18px;
@@ -236,6 +258,7 @@
         
         <div id="video-container" style="display: none;">
             <div id="fps">0 FPS</div>
+            <div id="cache-status" class="downloading">📦 ダウンロード中...</div>
             <div id="version">v1.0.0</div>
             <video id="video" playsinline autoplay></video>
             <canvas id="canvas"></canvas>
@@ -258,8 +281,82 @@
     <!-- アプリバージョン管理 -->
     <script>
         // バージョン番号（更新時にインクリメント）
-        const APP_VERSION = '1.0.1';
+        const APP_VERSION = '1.1.0';
         const BUILD_DATE = '2025-11-11';
+    </script>
+    
+    <!-- Service Worker の登録 -->
+    <script>
+        // Service Worker をサポートしているか確認
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then((registration) => {
+                        console.log('✅ Service Worker が登録されました:', registration.scope);
+                        
+                        // キャッシュステータスを確認
+                        checkCacheStatus();
+                    })
+                    .catch((error) => {
+                        console.log('❌ Service Worker の登録に失敗:', error);
+                    });
+            });
+        } else {
+            console.log('⚠️ このブラウザは Service Worker をサポートしていません');
+        }
+        
+        // キャッシュステータスを確認
+        async function checkCacheStatus() {
+            if (!navigator.serviceWorker.controller) {
+                return;
+            }
+            
+            const messageChannel = new MessageChannel();
+            messageChannel.port1.onmessage = (event) => {
+                if (event.data.type === 'CACHE_STATUS') {
+                    const cacheStatusEl = document.getElementById('cache-status');
+                    if (cacheStatusEl) {
+                        if (event.data.cached) {
+                            cacheStatusEl.textContent = `💾 キャッシュ済み (${event.data.fileCount}ファイル)`;
+                            cacheStatusEl.className = 'cached';
+                        } else {
+                            cacheStatusEl.textContent = '📦 初回ダウンロード';
+                            cacheStatusEl.className = 'downloading';
+                        }
+                        cacheStatusEl.style.display = 'block';
+                    }
+                }
+            };
+            
+            navigator.serviceWorker.controller.postMessage(
+                { type: 'GET_CACHE_STATUS' },
+                [messageChannel.port2]
+            );
+        }
+        
+        // キャッシュをクリアする関数（デバッグ用）
+        async function clearModelCache() {
+            if (!navigator.serviceWorker.controller) {
+                console.log('Service Worker が動作していません');
+                return;
+            }
+            
+            const messageChannel = new MessageChannel();
+            messageChannel.port1.onmessage = (event) => {
+                if (event.data.type === 'CACHE_CLEARED') {
+                    console.log('✅ キャッシュをクリアしました');
+                    location.reload();
+                }
+            };
+            
+            navigator.serviceWorker.controller.postMessage(
+                { type: 'CLEAR_CACHE' },
+                [messageChannel.port2]
+            );
+        }
+        
+        // グローバルに公開（デバッグ用）
+        window.clearModelCache = clearModelCache;
     </script>
 
     <script>
@@ -431,6 +528,9 @@
                 // ステップ6: 完了
                 const loadTime = ((Date.now() - startTime) / 1000).toFixed(1);
                 updateProgress(100, `読み込み完了！（${loadTime}秒）`);
+                
+                // キャッシュステータスを更新
+                setTimeout(checkCacheStatus, 1000);
                 
                 setTimeout(() => {
                     statusDiv.className = 'loading';
