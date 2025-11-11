@@ -258,7 +258,7 @@
     <!-- アプリバージョン管理 -->
     <script>
         // バージョン番号（更新時にインクリメント）
-        const APP_VERSION = '1.0.0';
+        const APP_VERSION = '1.0.1';
         const BUILD_DATE = '2025-11-11';
     </script>
 
@@ -585,8 +585,12 @@
                     }
                 } else {
                     // 顔検出
-                    const faces = await currentDetector.estimateFaces(video, {flipHorizontal: false});
+                    const faces = await currentDetector.estimateFaces(video);
                     if (faces && faces.length > 0) {
+                        // デバッグ: 最初の顔のデータ構造を確認
+                        if (frameCount === 0) {
+                            console.log('Face detection result:', faces[0]);
+                        }
                         faces.forEach(face => drawFace(face));
                     }
                 }
@@ -661,39 +665,47 @@
         
         // 顔検出の描画
         function drawFace(face) {
-            const box = face.box;
-            
             // バウンディングボックスの描画
-            ctx.strokeStyle = '#00ff00';
-            ctx.lineWidth = 3;
-            ctx.strokeRect(box.xMin, box.yMin, box.width, box.height);
-            
-            // キーポイントの描画（目、鼻、口など）
-            if (face.keypoints) {
-                face.keypoints.forEach(keypoint => {
-                    ctx.beginPath();
-                    ctx.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI);
-                    ctx.fillStyle = '#ff0000';
-                    ctx.fill();
-                    ctx.strokeStyle = '#ffffff';
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-                    
-                    // キーポイント名を表示
-                    if (keypoint.name) {
-                        ctx.fillStyle = '#ffffff';
-                        ctx.font = '10px Arial';
-                        ctx.fillText(keypoint.name, keypoint.x + 5, keypoint.y - 5);
-                    }
-                });
-            }
-            
-            // 信頼度スコアの表示（オプション）
             if (face.box) {
+                const box = face.box;
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(box.xMin, box.yMin, box.width, box.height);
+                
+                // 信頼度スコアの表示
                 ctx.fillStyle = '#00ff00';
                 ctx.font = '14px Arial';
                 const scoreText = '顔検出';
                 ctx.fillText(scoreText, box.xMin, box.yMin - 5);
+            }
+            
+            // キーポイントの描画（目、鼻、口など）
+            if (face.keypoints && Array.isArray(face.keypoints)) {
+                console.log('Drawing keypoints:', face.keypoints.length);
+                face.keypoints.forEach((keypoint, index) => {
+                    // キーポイントの座標を確認
+                    const x = keypoint.x;
+                    const y = keypoint.y;
+                    
+                    if (x !== undefined && y !== undefined) {
+                        // キーポイントの円を描画
+                        ctx.beginPath();
+                        ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                        ctx.fillStyle = '#ff0000';
+                        ctx.fill();
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        
+                        // キーポイント名を表示
+                        const name = keypoint.name || `Point ${index}`;
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = '10px Arial';
+                        ctx.fillText(name, x + 7, y - 7);
+                    }
+                });
+            } else {
+                console.log('No keypoints found or keypoints is not an array');
             }
         }
         
