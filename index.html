@@ -281,8 +281,8 @@
     <!-- アプリバージョン管理 -->
     <script>
         // バージョン番号（更新時にインクリメント）
-        const APP_VERSION = '1.1.0';
-        const BUILD_DATE = '2025-11-11';
+        const APP_VERSION = '1.2.0-debug';
+        const BUILD_DATE = '2025-11-11 (顔ランドマーク修正版)';
     </script>
     
     <!-- Service Worker の登録 -->
@@ -689,11 +689,21 @@
                     // 顔検出
                     const faces = await currentDetector.estimateFaces(video);
                     if (faces && faces.length > 0) {
-                        // デバッグ: 最初の顔のデータ構造を確認
-                        if (frameCount === 0) {
-                            console.log('Face detection result:', faces[0]);
+                        // デバッグ: 顔のデータ構造を確認
+                        if (frameCount % 30 === 0) { // 30フレームごとにログ
+                            console.log('✅ 顔検出:', faces.length, '個の顔');
+                            console.log('顔データ構造:', faces[0]);
+                            if (faces[0].keypoints) {
+                                console.log('キーポイント数:', faces[0].keypoints.length);
+                                console.log('最初のキーポイント:', faces[0].keypoints[0]);
+                            }
                         }
                         faces.forEach(face => drawFace(face));
+                    } else {
+                        // 顔が検出されない場合
+                        if (frameCount % 60 === 0) {
+                            console.log('⚠️ 顔が検出されませんでした');
+                        }
                     }
                 }
                 
@@ -767,42 +777,74 @@
         
         // 顔メッシュの描画
         function drawFace(face) {
+            // デバッグログ（60フレームごと = 約2秒に1回）
+            if (frameCount % 60 === 0) {
+                console.log('🎨 drawFace呼び出し:', face);
+            }
+            
             // バウンディングボックスの描画
             if (face.box) {
                 const box = face.box;
                 ctx.strokeStyle = '#00ff00';
-                ctx.lineWidth = 2;
+                ctx.lineWidth = 3;
                 ctx.strokeRect(box.xMin, box.yMin, box.width, box.height);
                 
-                // ラベル表示
-                ctx.fillStyle = '#00ff00';
-                ctx.font = '14px Arial';
-                ctx.fillText('顔検出', box.xMin, box.yMin - 5);
+                // ラベル表示（背景付き）
+                ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                ctx.fillRect(box.xMin, box.yMin - 25, 100, 25);
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 16px Arial';
+                ctx.fillText('顔検出 ✓', box.xMin + 5, box.yMin - 8);
             }
             
             // キーポイント（ランドマーク）の描画
             if (face.keypoints && Array.isArray(face.keypoints)) {
+                if (frameCount % 60 === 0) {
+                    console.log('✅ キーポイント数:', face.keypoints.length);
+                }
+                
                 // すべてのランドマークを描画（468個）
+                let validPointCount = 0;
                 face.keypoints.forEach((keypoint, index) => {
                     const x = keypoint.x;
                     const y = keypoint.y;
                     
-                    if (x !== undefined && y !== undefined) {
+                    if (x !== undefined && y !== undefined && !isNaN(x) && !isNaN(y)) {
+                        validPointCount++;
                         // 小さな点として描画
                         ctx.beginPath();
-                        ctx.arc(x, y, 1, 0, 2 * Math.PI);
+                        ctx.arc(x, y, 1.5, 0, 2 * Math.PI);
                         ctx.fillStyle = '#00ff00';
                         ctx.fill();
                     }
                 });
                 
+                if (frameCount % 60 === 0) {
+                    console.log('✅ 有効なポイント数:', validPointCount);
+                }
+                
                 // 主要なランドマークを大きく表示
                 drawFacialFeatures(face.keypoints);
+            } else {
+                if (frameCount % 60 === 0) {
+                    console.log('❌ キーポイントが見つかりません:', face);
+                }
             }
         }
         
         // 主要な顔のパーツを描画（目、鼻、口など）
         function drawFacialFeatures(keypoints) {
+            if (frameCount % 60 === 0) {
+                console.log('🎈 drawFacialFeatures 呼び出し, keypoints数:', keypoints.length);
+            }
+            
+            if (!keypoints || keypoints.length === 0) {
+                if (frameCount % 60 === 0) {
+                    console.warn('⚠️ keypointsが空です');
+                }
+                return;
+            }
+            
             // 顔の主要な特徴点のインデックス（MediaPipe FaceMesh仕様）
             const features = {
                 leftEye: [33, 133, 157, 158, 159, 160, 161, 163, 144, 145, 153, 154, 155],
@@ -834,37 +876,53 @@
             
             // 顔の輪郭
             drawFeaturePath(keypoints, features.faceOval, '#00ff00', false);
+            
+            if (frameCount % 60 === 0) {
+                console.log('✅ drawFacialFeatures 完了');
+            }
         }
         
         // 特徴点を線で結ぶ
         function drawFeaturePath(keypoints, indices, color, closed) {
             if (indices.length < 2) return;
             
-            ctx.beginPath();
-            const firstPoint = keypoints[indices[0]];
-            ctx.moveTo(firstPoint.x, firstPoint.y);
-            
-            for (let i = 1; i < indices.length; i++) {
-                const point = keypoints[indices[i]];
-                ctx.lineTo(point.x, point.y);
-            }
-            
-            if (closed) {
-                ctx.closePath();
-            }
-            
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-            ctx.stroke();
-            
-            // 各ポイントに円を描画
-            indices.forEach(index => {
-                const point = keypoints[index];
+            try {
                 ctx.beginPath();
-                ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
-                ctx.fillStyle = color;
-                ctx.fill();
-            });
+                const firstPoint = keypoints[indices[0]];
+                if (!firstPoint || firstPoint.x === undefined || firstPoint.y === undefined) {
+                    console.warn('無効な最初のポイント:', indices[0]);
+                    return;
+                }
+                ctx.moveTo(firstPoint.x, firstPoint.y);
+                
+                for (let i = 1; i < indices.length; i++) {
+                    const point = keypoints[indices[i]];
+                    if (point && point.x !== undefined && point.y !== undefined) {
+                        ctx.lineTo(point.x, point.y);
+                    }
+                }
+                
+                if (closed) {
+                    ctx.closePath();
+                }
+                
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // 各ポイントに円を描画
+                indices.forEach(index => {
+                    const point = keypoints[index];
+                    if (point && point.x !== undefined && point.y !== undefined) {
+                        ctx.beginPath();
+                        ctx.arc(point.x, point.y, 3, 0, 2 * Math.PI);
+                        ctx.fillStyle = color;
+                        ctx.fill();
+                    }
+                });
+            } catch (error) {
+                console.error('drawFeaturePath エラー:', error);
+            }
         }
         
         // イベントリスナー
