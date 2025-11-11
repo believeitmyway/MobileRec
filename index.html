@@ -225,6 +225,7 @@
         <div id="controls">
             <button id="startBtn" disabled>カメラを起動</button>
             <button id="switchBtn" style="display: none;">カメラ切替</button>
+            <button id="modelSwitchBtn" style="display: none;">体検出 ⇄ 顔検出</button>
         </div>
     </div>
 
@@ -232,10 +233,15 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0"></script>
     <!-- Pose Detection -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0"></script>
+    <!-- Face Detection -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-detection@1.0.1"></script>
 
     <script>
         let video, canvas, ctx;
-        let detector;
+        let poseDetector;
+        let faceDetector;
+        let currentDetector;
+        let detectionMode = 'pose'; // 'pose' または 'face'
         let animationId;
         let currentFacingMode = 'user'; // 'user' = フロントカメラ, 'environment' = バックカメラ
         let stream;
@@ -249,6 +255,7 @@
         const statusDiv = document.getElementById('status');
         const startBtn = document.getElementById('startBtn');
         const switchBtn = document.getElementById('switchBtn');
+        const modelSwitchBtn = document.getElementById('modelSwitchBtn');
         const videoContainer = document.getElementById('video-container');
         const fpsDisplay = document.getElementById('fps');
         const progressContainer = document.getElementById('progress-container');
@@ -333,19 +340,23 @@
                 updateProgress(40, `バックエンド "${backend}" を初期化しました`);
                 
                 // ステップ3: Pose Detectionライブラリの確認
-                updateProgress(50, 'Pose Detectionライブラリを確認中...');
+                updateProgress(40, 'Pose Detectionライブラリを確認中...');
                 
                 if (typeof poseDetection === 'undefined') {
                     throw new Error('Pose Detectionライブラリが読み込まれていません。インターネット接続を確認してください。');
                 }
                 
-                // ステップ4: モデルの読み込み
-                statusDiv.textContent = 'MoveNetモデルを読み込み中...（大きなファイルをダウンロードしています）';
-                updateProgress(60, 'MoveNetモデルをダウンロード中...');
+                if (typeof faceDetection === 'undefined') {
+                    throw new Error('Face Detectionライブラリが読み込まれていません。インターネット接続を確認してください。');
+                }
+                
+                // ステップ4: 体検出モデルの読み込み
+                statusDiv.textContent = 'MoveNet（体検出）モデルを読み込み中...';
+                updateProgress(50, 'MoveNetモデルをダウンロード中...');
                 
                 try {
                     // タイムアウト120秒でモデルをロード（通信が遅い環境用）
-                    detector = await withTimeout(
+                    poseDetector = await withTimeout(
                         poseDetection.createDetector(
                             poseDetection.SupportedModels.MoveNet,
                             {
@@ -353,23 +364,48 @@
                             }
                         ),
                         120000,
-                        'モデルのダウンロードがタイムアウトしました（120秒）。通信速度が非常に遅い可能性があります。再試行するか、より高速なネットワークに接続してください。'
+                        'MoveNetモデルのダウンロードがタイムアウトしました（120秒）。通信速度が非常に遅い可能性があります。再試行するか、より高速なネットワークに接続してください。'
                     );
                 } catch (error) {
-                    throw new Error('モデルの読み込みに失敗: ' + error.message);
+                    throw new Error('体検出モデルの読み込みに失敗: ' + error.message);
                 }
                 
-                updateProgress(90, 'モデルの初期化中...');
+                updateProgress(70, '体検出モデル読み込み完了');
                 
-                // ステップ5: 完了
+                // ステップ5: 顔検出モデルの読み込み
+                statusDiv.textContent = 'MediaPipe FaceDetection（顔検出）モデルを読み込み中...';
+                updateProgress(75, '顔検出モデルをダウンロード中...');
+                
+                try {
+                    faceDetector = await withTimeout(
+                        faceDetection.createDetector(
+                            faceDetection.SupportedModels.MediaPipeFaceDetector,
+                            {
+                                runtime: 'tfjs'
+                            }
+                        ),
+                        120000,
+                        '顔検出モデルのダウンロードがタイムアウトしました（120秒）。'
+                    );
+                } catch (error) {
+                    throw new Error('顔検出モデルの読み込みに失敗: ' + error.message);
+                }
+                
+                updateProgress(90, '顔検出モデル読み込み完了');
+                
+                // デフォルトは体検出
+                currentDetector = poseDetector;
+                
+                // ステップ6: 完了
                 const loadTime = ((Date.now() - startTime) / 1000).toFixed(1);
                 updateProgress(100, `読み込み完了！（${loadTime}秒）`);
                 
                 setTimeout(() => {
                     statusDiv.className = 'loading';
-                    statusDiv.textContent = '✅ モデルの読み込み完了！カメラを起動してください';
+                    statusDiv.textContent = '✅ モデルの読み込み完了！カメラを起動してください（体検出モード）';
                     progressContainer.style.display = 'none';
                     startBtn.disabled = false;
+                    modelSwitchBtn.style.display = 'inline-block';
                 }, 1000);
                 
             } catch (error) {
@@ -474,7 +510,30 @@
             await startCamera();
         }
         
-        // 姿勢検出
+        // モデル切替
+        function switchDetectionMode() {
+            if (detectionMode === 'pose') {
+                detectionMode = 'face';
+                currentDetector = faceDetector;
+                modelSwitchBtn.textContent = '顔検出 ⇄ 体検出';
+                statusDiv.textContent = '顔検出モード';
+            } else {
+                detectionMode = 'pose';
+                currentDetector = poseDetector;
+                modelSwitchBtn.textContent = '体検出 ⇄ 顔検出';
+                statusDiv.textContent = '体検出モード';
+            }
+            
+            // カメラが起動している場合は表示を非表示に
+            if (stream) {
+                statusDiv.style.display = 'block';
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 2000);
+            }
+        }
+        
+        // 検出処理（姿勢または顔）
         async function detectPose() {
             if (!video || video.readyState < 2) {
                 animationId = requestAnimationFrame(detectPose);
@@ -482,15 +541,22 @@
             }
             
             try {
-                // 姿勢を検出
-                const poses = await detector.estimatePoses(video);
-                
                 // キャンバスをクリア
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 
-                // 検出された姿勢を描画
-                if (poses && poses.length > 0) {
-                    drawPose(poses[0]);
+                // 現在のモードに応じて検出
+                if (detectionMode === 'pose') {
+                    // 体検出
+                    const poses = await currentDetector.estimatePoses(video);
+                    if (poses && poses.length > 0) {
+                        drawPose(poses[0]);
+                    }
+                } else {
+                    // 顔検出
+                    const faces = await currentDetector.estimateFaces(video, {flipHorizontal: false});
+                    if (faces && faces.length > 0) {
+                        faces.forEach(face => drawFace(face));
+                    }
                 }
                 
                 // FPS計算
@@ -561,6 +627,44 @@
             ctx.stroke();
         }
         
+        // 顔検出の描画
+        function drawFace(face) {
+            const box = face.box;
+            
+            // バウンディングボックスの描画
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(box.xMin, box.yMin, box.width, box.height);
+            
+            // キーポイントの描画（目、鼻、口など）
+            if (face.keypoints) {
+                face.keypoints.forEach(keypoint => {
+                    ctx.beginPath();
+                    ctx.arc(keypoint.x, keypoint.y, 4, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#ff0000';
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    
+                    // キーポイント名を表示
+                    if (keypoint.name) {
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = '10px Arial';
+                        ctx.fillText(keypoint.name, keypoint.x + 5, keypoint.y - 5);
+                    }
+                });
+            }
+            
+            // 信頼度スコアの表示（オプション）
+            if (face.box) {
+                ctx.fillStyle = '#00ff00';
+                ctx.font = '14px Arial';
+                const scoreText = '顔検出';
+                ctx.fillText(scoreText, box.xMin, box.yMin - 5);
+            }
+        }
+        
         // イベントリスナー
         startBtn.addEventListener('click', () => {
             if (stream) {
@@ -571,6 +675,8 @@
         });
         
         switchBtn.addEventListener('click', switchCamera);
+        
+        modelSwitchBtn.addEventListener('click', switchDetectionMode);
         
         // ページ読み込み時に初期化
         window.addEventListener('load', init);
