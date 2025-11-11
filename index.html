@@ -275,8 +275,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0"></script>
     <!-- Pose Detection -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0"></script>
-    <!-- Face Detection -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-detection@1.0.1"></script>
+    <!-- Face Landmarks Detection (Face Mesh) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.2"></script>
     
     <!-- アプリバージョン管理 -->
     <script>
@@ -475,8 +475,8 @@
                     throw new Error('Pose Detectionライブラリが読み込まれていません。インターネット接続を確認してください。');
                 }
                 
-                if (typeof faceDetection === 'undefined') {
-                    throw new Error('Face Detectionライブラリが読み込まれていません。インターネット接続を確認してください。');
+                if (typeof faceLandmarksDetection === 'undefined') {
+                    throw new Error('Face Landmarks Detectionライブラリが読み込まれていません。インターネット接続を確認してください。');
                 }
                 
                 // ステップ4: 体検出モデルの読み込み
@@ -501,26 +501,28 @@
                 
                 updateProgress(70, '体検出モデル読み込み完了');
                 
-                // ステップ5: 顔検出モデルの読み込み
-                statusDiv.textContent = 'MediaPipe FaceDetection（顔検出）モデルを読み込み中...';
-                updateProgress(75, '顔検出モデルをダウンロード中...');
+                // ステップ5: 顔メッシュモデルの読み込み
+                statusDiv.textContent = 'MediaPipe FaceMesh（顔ランドマーク検出）モデルを読み込み中...';
+                updateProgress(75, '顔メッシュモデルをダウンロード中...');
                 
                 try {
                     faceDetector = await withTimeout(
-                        faceDetection.createDetector(
-                            faceDetection.SupportedModels.MediaPipeFaceDetector,
+                        faceLandmarksDetection.createDetector(
+                            faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
                             {
-                                runtime: 'tfjs'
+                                runtime: 'tfjs',
+                                refineLandmarks: true,
+                                maxFaces: 1
                             }
                         ),
                         120000,
-                        '顔検出モデルのダウンロードがタイムアウトしました（120秒）。'
+                        '顔メッシュモデルのダウンロードがタイムアウトしました（120秒）。'
                     );
                 } catch (error) {
-                    throw new Error('顔検出モデルの読み込みに失敗: ' + error.message);
+                    throw new Error('顔メッシュモデルの読み込みに失敗: ' + error.message);
                 }
                 
-                updateProgress(90, '顔検出モデル読み込み完了');
+                updateProgress(90, '顔メッシュモデル読み込み完了');
                 
                 // デフォルトは体検出
                 currentDetector = poseDetector;
@@ -763,50 +765,106 @@
             ctx.stroke();
         }
         
-        // 顔検出の描画
+        // 顔メッシュの描画
         function drawFace(face) {
             // バウンディングボックスの描画
             if (face.box) {
                 const box = face.box;
                 ctx.strokeStyle = '#00ff00';
-                ctx.lineWidth = 3;
+                ctx.lineWidth = 2;
                 ctx.strokeRect(box.xMin, box.yMin, box.width, box.height);
                 
-                // 信頼度スコアの表示
+                // ラベル表示
                 ctx.fillStyle = '#00ff00';
                 ctx.font = '14px Arial';
-                const scoreText = '顔検出';
-                ctx.fillText(scoreText, box.xMin, box.yMin - 5);
+                ctx.fillText('顔検出', box.xMin, box.yMin - 5);
             }
             
-            // キーポイントの描画（目、鼻、口など）
+            // キーポイント（ランドマーク）の描画
             if (face.keypoints && Array.isArray(face.keypoints)) {
-                console.log('Drawing keypoints:', face.keypoints.length);
+                // すべてのランドマークを描画（468個）
                 face.keypoints.forEach((keypoint, index) => {
-                    // キーポイントの座標を確認
                     const x = keypoint.x;
                     const y = keypoint.y;
                     
                     if (x !== undefined && y !== undefined) {
-                        // キーポイントの円を描画
+                        // 小さな点として描画
                         ctx.beginPath();
-                        ctx.arc(x, y, 5, 0, 2 * Math.PI);
-                        ctx.fillStyle = '#ff0000';
+                        ctx.arc(x, y, 1, 0, 2 * Math.PI);
+                        ctx.fillStyle = '#00ff00';
                         ctx.fill();
-                        ctx.strokeStyle = '#ffffff';
-                        ctx.lineWidth = 2;
-                        ctx.stroke();
-                        
-                        // キーポイント名を表示
-                        const name = keypoint.name || `Point ${index}`;
-                        ctx.fillStyle = '#ffffff';
-                        ctx.font = '10px Arial';
-                        ctx.fillText(name, x + 7, y - 7);
                     }
                 });
-            } else {
-                console.log('No keypoints found or keypoints is not an array');
+                
+                // 主要なランドマークを大きく表示
+                drawFacialFeatures(face.keypoints);
             }
+        }
+        
+        // 主要な顔のパーツを描画（目、鼻、口など）
+        function drawFacialFeatures(keypoints) {
+            // 顔の主要な特徴点のインデックス（MediaPipe FaceMesh仕様）
+            const features = {
+                leftEye: [33, 133, 157, 158, 159, 160, 161, 163, 144, 145, 153, 154, 155],
+                rightEye: [362, 263, 387, 386, 385, 384, 398, 373, 374, 380, 381, 382],
+                leftEyebrow: [70, 63, 105, 66, 107, 55, 65, 52, 53, 46],
+                rightEyebrow: [300, 293, 334, 296, 336, 285, 295, 282, 283, 276],
+                nose: [1, 2, 98, 327],
+                lips: [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 185, 40, 39, 37, 0, 267, 269, 270, 409],
+                faceOval: [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109]
+            };
+            
+            // 左目の輪郭
+            drawFeaturePath(keypoints, features.leftEye, '#00ffff', true);
+            
+            // 右目の輪郭
+            drawFeaturePath(keypoints, features.rightEye, '#00ffff', true);
+            
+            // 左眉毛
+            drawFeaturePath(keypoints, features.leftEyebrow, '#ffff00', false);
+            
+            // 右眉毛
+            drawFeaturePath(keypoints, features.rightEyebrow, '#ffff00', false);
+            
+            // 鼻
+            drawFeaturePath(keypoints, features.nose, '#ff00ff', false);
+            
+            // 唇の輪郭
+            drawFeaturePath(keypoints, features.lips, '#ff0000', true);
+            
+            // 顔の輪郭
+            drawFeaturePath(keypoints, features.faceOval, '#00ff00', false);
+        }
+        
+        // 特徴点を線で結ぶ
+        function drawFeaturePath(keypoints, indices, color, closed) {
+            if (indices.length < 2) return;
+            
+            ctx.beginPath();
+            const firstPoint = keypoints[indices[0]];
+            ctx.moveTo(firstPoint.x, firstPoint.y);
+            
+            for (let i = 1; i < indices.length; i++) {
+                const point = keypoints[indices[i]];
+                ctx.lineTo(point.x, point.y);
+            }
+            
+            if (closed) {
+                ctx.closePath();
+            }
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // 各ポイントに円を描画
+            indices.forEach(index => {
+                const point = keypoints[index];
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+            });
         }
         
         // イベントリスナー
