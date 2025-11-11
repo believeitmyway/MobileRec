@@ -12,7 +12,7 @@ const CORE_ASSETS = [
 const TFJS_URLS = [
     'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/',
     'https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/',
-    'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-detection@1.0.1/'
+    'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.2/'
 ];
 
 // インストール時
