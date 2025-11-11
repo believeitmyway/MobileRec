@@ -125,16 +125,96 @@
         .error {
             color: #ff6b6b;
             background: white;
-            padding: 15px;
+            padding: 20px;
             border-radius: 10px;
             max-width: 90vw;
+            text-align: left;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        .error h3 {
+            margin: 0 0 10px 0;
+            color: #e74c3c;
+        }
+        
+        .error-details {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 12px;
+            color: #333;
+            overflow-wrap: break-word;
+        }
+        
+        .error-actions {
+            margin-top: 15px;
             text-align: center;
+        }
+        
+        #retryBtn {
+            background: #3498db;
+            color: white;
+            margin-top: 10px;
+        }
+        
+        #retryBtn:hover {
+            background: #2980b9;
+        }
+        
+        /* プログレスバー */
+        #progress-container {
+            width: 100%;
+            max-width: 500px;
+            margin: 10px 0;
+            display: none;
+        }
+        
+        #progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        #progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 10px;
+        }
+        
+        #progress-text {
+            color: white;
+            font-size: 12px;
+            margin-top: 5px;
+            text-align: center;
+        }
+        
+        .pulse {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
         }
     </style>
 </head>
 <body>
     <div id="container">
-        <div id="status" class="loading">モデルを読み込み中...</div>
+        <div id="status" class="loading pulse">モデルを読み込み中...</div>
+        
+        <!-- プログレスバー -->
+        <div id="progress-container">
+            <div id="progress-bar">
+                <div id="progress-fill"></div>
+            </div>
+            <div id="progress-text">初期化中...</div>
+        </div>
         
         <div id="video-container" style="display: none;">
             <div id="fps">0 FPS</div>
@@ -171,32 +251,157 @@
         const switchBtn = document.getElementById('switchBtn');
         const videoContainer = document.getElementById('video-container');
         const fpsDisplay = document.getElementById('fps');
+        const progressContainer = document.getElementById('progress-container');
+        const progressFill = document.getElementById('progress-fill');
+        const progressText = document.getElementById('progress-text');
+        
+        // プログレスバーを更新
+        function updateProgress(percent, message) {
+            progressContainer.style.display = 'block';
+            progressFill.style.width = percent + '%';
+            progressText.textContent = message;
+        }
+        
+        // 詳細なエラーを表示
+        function showDetailedError(errorMessage, details) {
+            statusDiv.className = 'error';
+            statusDiv.innerHTML = `
+                <h3>❌ エラーが発生しました</h3>
+                <p><strong>エラー内容:</strong> ${errorMessage}</p>
+                <div class="error-details">
+                    ${details}
+                </div>
+                <div class="error-actions">
+                    <button id="retryBtn">🔄 再試行</button>
+                </div>
+            `;
+            
+            progressContainer.style.display = 'none';
+            
+            // 再試行ボタンのイベントリスナー
+            document.getElementById('retryBtn').addEventListener('click', () => {
+                location.reload();
+            });
+        }
+        
+        // タイムアウト付きPromise
+        function withTimeout(promise, timeoutMs, timeoutMessage) {
+            return Promise.race([
+                promise,
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
+                )
+            ]);
+        }
         
         // 初期化
         async function init() {
+            const startTime = Date.now();
+            
             try {
                 video = document.getElementById('video');
                 canvas = document.getElementById('canvas');
                 ctx = canvas.getContext('2d');
                 
-                // モデルの読み込み
-                statusDiv.textContent = 'モデルを読み込み中...';
+                // ステップ1: TensorFlow.jsの読み込み確認
+                statusDiv.textContent = 'TensorFlow.jsを初期化中...';
+                updateProgress(10, 'TensorFlow.jsを読み込んでいます...');
                 
-                // MoveNet Lightning（軽量版）を使用
-                detector = await poseDetection.createDetector(
-                    poseDetection.SupportedModels.MoveNet,
-                    {
-                        modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
-                    }
-                );
+                if (typeof tf === 'undefined') {
+                    throw new Error('TensorFlow.jsが読み込まれていません。インターネット接続を確認してください。');
+                }
                 
-                statusDiv.textContent = 'モデルの読み込み完了！カメラを起動してください';
-                startBtn.disabled = false;
+                // ステップ2: バックエンドの初期化（重要！）
+                updateProgress(20, 'バックエンドを初期化中...');
+                statusDiv.textContent = 'バックエンドを初期化中...';
+                
+                try {
+                    // タイムアウト60秒でバックエンドを初期化
+                    await withTimeout(
+                        tf.ready(),
+                        60000,
+                        'バックエンドの初期化がタイムアウトしました（60秒）。通信速度が遅い可能性があります。'
+                    );
+                } catch (error) {
+                    throw new Error('バックエンドの初期化に失敗: ' + error.message);
+                }
+                
+                // バックエンド情報を取得
+                const backend = tf.getBackend();
+                console.log('使用中のバックエンド:', backend);
+                
+                updateProgress(40, `バックエンド "${backend}" を初期化しました`);
+                
+                // ステップ3: Pose Detectionライブラリの確認
+                updateProgress(50, 'Pose Detectionライブラリを確認中...');
+                
+                if (typeof poseDetection === 'undefined') {
+                    throw new Error('Pose Detectionライブラリが読み込まれていません。インターネット接続を確認してください。');
+                }
+                
+                // ステップ4: モデルの読み込み
+                statusDiv.textContent = 'MoveNetモデルを読み込み中...（大きなファイルをダウンロードしています）';
+                updateProgress(60, 'MoveNetモデルをダウンロード中...');
+                
+                try {
+                    // タイムアウト120秒でモデルをロード（通信が遅い環境用）
+                    detector = await withTimeout(
+                        poseDetection.createDetector(
+                            poseDetection.SupportedModels.MoveNet,
+                            {
+                                modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+                            }
+                        ),
+                        120000,
+                        'モデルのダウンロードがタイムアウトしました（120秒）。通信速度が非常に遅い可能性があります。再試行するか、より高速なネットワークに接続してください。'
+                    );
+                } catch (error) {
+                    throw new Error('モデルの読み込みに失敗: ' + error.message);
+                }
+                
+                updateProgress(90, 'モデルの初期化中...');
+                
+                // ステップ5: 完了
+                const loadTime = ((Date.now() - startTime) / 1000).toFixed(1);
+                updateProgress(100, `読み込み完了！（${loadTime}秒）`);
+                
+                setTimeout(() => {
+                    statusDiv.className = 'loading';
+                    statusDiv.textContent = '✅ モデルの読み込み完了！カメラを起動してください';
+                    progressContainer.style.display = 'none';
+                    startBtn.disabled = false;
+                }, 1000);
                 
             } catch (error) {
                 console.error('初期化エラー:', error);
-                statusDiv.className = 'error';
-                statusDiv.textContent = '初期化に失敗しました: ' + error.message;
+                
+                // 詳細なエラー情報を収集
+                const loadTime = ((Date.now() - startTime) / 1000).toFixed(1);
+                let backend = 'unknown';
+                try {
+                    backend = tf ? tf.getBackend() : 'TensorFlow.js未読み込み';
+                } catch (e) {
+                    backend = 'エラー';
+                }
+                
+                const errorDetails = `
+                    <strong>バックエンド:</strong> ${backend}<br>
+                    <strong>読み込み時間:</strong> ${loadTime}秒<br>
+                    <strong>ブラウザ:</strong> ${navigator.userAgent}<br>
+                    <strong>オンライン状態:</strong> ${navigator.onLine ? 'オンライン' : 'オフライン'}<br>
+                    <br>
+                    <strong>技術的な詳細:</strong><br>
+                    ${error.stack ? error.stack.substring(0, 500) : error.message}
+                    <br><br>
+                    <strong>💡 対処方法:</strong><br>
+                    • より高速なネットワークに接続してください<br>
+                    • ページをリロードして再試行してください<br>
+                    • ブラウザのキャッシュをクリアしてください<br>
+                    • 他のタブやアプリを閉じてメモリを解放してください<br>
+                    • 別のブラウザで試してください（Chrome推奨）
+                `;
+                
+                showDetailedError(error.message, errorDetails);
             }
         }
         
