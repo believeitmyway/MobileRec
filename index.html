@@ -523,15 +523,15 @@
                 updateProgress(75, '顔メッシュモデルをダウンロード中...');
                 
                 try {
-                    // MediaPipe FaceMesh の設定を改善
+                    // MediaPipe FaceMesh の設定を最適化
                     console.log('[Init] 顔検出モデルを読み込み中...');
                     faceDetector = await withTimeout(
                         faceLandmarksDetection.createDetector(
                             faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
                             {
                                 runtime: 'tfjs',
-                                refineLandmarks: false,  // 軽量化のためfalseに変更
-                                maxFaces: 3,  // 最大3つの顔を検出
+                                refineLandmarks: true,  // より高精度な検出のためtrueに変更
+                                maxFaces: 5,  // 最大5つの顔を検出
                                 detectorModelUrl: undefined,  // デフォルトのモデルを使用
                                 landmarksModelUrl: undefined  // デフォルトのモデルを使用
                             }
@@ -540,6 +540,7 @@
                         '顔メッシュモデルのダウンロードがタイムアウトしました（120秒）。'
                     );
                     console.log('[Init] ✅ 顔検出モデルの読み込み完了');
+                    console.log('[Init] Detector object:', faceDetector);
                 } catch (error) {
                     console.error('[Init] ❌ 顔検出モデルの読み込み失敗:', error);
                     throw new Error('顔メッシュモデルの読み込みに失敗: ' + error.message);
@@ -719,13 +720,21 @@
                                 videoWidth: video.videoWidth,
                                 videoHeight: video.videoHeight,
                                 paused: video.paused,
-                                currentTime: video.currentTime
+                                currentTime: video.currentTime,
+                                detectorType: typeof currentDetector,
+                                detectorMethods: currentDetector ? Object.keys(currentDetector) : 'null'
                             });
                         }
                         
                         // 顔検出を実行（エラーハンドリング付き）
+                        // estimateFacesメソッドが存在するか確認
+                        if (!currentDetector || typeof currentDetector.estimateFaces !== 'function') {
+                            throw new Error('顔検出器が正しく初期化されていません');
+                        }
+                        
                         const faces = await currentDetector.estimateFaces(video, {
-                            flipHorizontal: false  // ミラー表示はCSS側で行っているためfalse
+                            flipHorizontal: false,  // ミラー表示はCSS側で行っているためfalse
+                            staticImageMode: false  // ビデオモード
                         });
                         
                         // デバッグ情報を画面に表示
@@ -735,22 +744,29 @@
                             debugInfo.innerHTML = `
                                 ✅ 顔検出: ${faces.length}個<br>
                                 キーポイント: ${face.keypoints ? face.keypoints.length : 0}個<br>
-                                box: ${face.box ? 'あり' : 'なし'}<br>
-                                boundingBox: ${face.boundingBox ? 'あり' : 'なし'}<br>
-                                プロパティ: ${Object.keys(face).join(', ')}
+                                box: ${face.box ? JSON.stringify(face.box) : 'なし'}<br>
+                                boundingBox: ${face.boundingBox ? JSON.stringify(face.boundingBox) : 'なし'}<br>
+                                プロパティ: ${Object.keys(face).join(', ')}<br>
+                                <small>✅ 描画中...</small>
                             `;
                             
                             // コンソールにも詳細を出力（30フレームごと）
                             if (frameCount % 30 === 0) {
                                 console.log('[Face Detection] ✅ 顔検出成功:', faces.length, '個の顔');
-                                console.log('[Face Detection] 顔データ構造:', face);
+                                console.log('[Face Detection] 顔データ構造:', JSON.stringify(face, null, 2));
                                 if (face.keypoints && face.keypoints.length > 0) {
                                     console.log('[Face Detection] キーポイント数:', face.keypoints.length);
                                     console.log('[Face Detection] 最初のキーポイント:', face.keypoints[0]);
+                                    console.log('[Face Detection] box:', face.box);
+                                    console.log('[Face Detection] boundingBox:', face.boundingBox);
                                 }
                             }
                             
-                            faces.forEach(face => drawFace(face));
+                            // すべての顔を描画
+                            faces.forEach((face, idx) => {
+                                console.log(`[Face Detection] Drawing face #${idx + 1}`);
+                                drawFace(face, idx);
+                            });
                         } else {
                             // 顔が検出されない場合
                             debugInfo.style.display = 'block';
@@ -758,18 +774,24 @@
                                 ❌ 顔が検出されていません<br>
                                 ビデオ: ${video.videoWidth}x${video.videoHeight}<br>
                                 readyState: ${video.readyState}<br>
+                                フレーム: ${frameCount}<br>
                                 <small>明るい場所で顔を正面に向けてください</small>
                             `;
                             
                             if (frameCount % 60 === 0) {
                                 console.log('[Face Detection] ⚠️ 顔が検出されませんでした');
                                 console.log('[Face Detection] ビデオサイズ:', video.videoWidth, 'x', video.videoHeight);
+                                console.log('[Face Detection] 検出結果:', faces);
                             }
                         }
                     } catch (error) {
                         console.error('[Face Detection] ❌ 顔検出エラー:', error);
+                        console.error('[Face Detection] エラースタック:', error.stack);
                         debugInfo.style.display = 'block';
-                        debugInfo.innerHTML = `❌ エラー: ${error.message}`;
+                        debugInfo.innerHTML = `
+                            ❌ エラー: ${error.message}<br>
+                            <small>詳細はコンソールを確認してください</small>
+                        `;
                     }
                 }
                 
@@ -842,50 +864,120 @@
         }
         
         // 顔メッシュの描画
-        function drawFace(face) {
+        function drawFace(face, faceIndex = 0) {
             // デバッグログ（60フレームごと = 約2秒に1回）
             if (frameCount % 60 === 0) {
-                console.log('🎨 drawFace呼び出し:', face);
+                console.log(`🎨 drawFace呼び出し (顔 #${faceIndex + 1}):`, face);
+            }
+            
+            // 顔オブジェクトの検証
+            if (!face) {
+                console.error('❌ face オブジェクトが null または undefined です');
+                return;
             }
             
             // バウンディングボックスの描画（box または boundingBox プロパティを確認）
             const box = face.box || face.boundingBox;
+            
+            if (frameCount % 60 === 0) {
+                console.log('📦 box情報:', box);
+            }
+            
             if (box) {
                 ctx.strokeStyle = '#00ff00';
-                ctx.lineWidth = 3;
+                ctx.lineWidth = 4;
                 
-                // box の形式に応じて描画を調整
+                let boxX, boxY, boxWidth, boxHeight;
+                
+                // box の形式に応じて座標を取得
                 if (box.xMin !== undefined && box.yMin !== undefined) {
-                    // {xMin, yMin, width, height} 形式
-                    const width = box.width || (box.xMax - box.xMin);
-                    const height = box.height || (box.yMax - box.yMin);
-                    ctx.strokeRect(box.xMin, box.yMin, width, height);
+                    // {xMin, yMin, xMax, yMax} または {xMin, yMin, width, height} 形式
+                    boxX = box.xMin;
+                    boxY = box.yMin;
+                    boxWidth = box.width || (box.xMax - box.xMin);
+                    boxHeight = box.height || (box.yMax - box.yMin);
                     
-                    // ラベル表示（背景付き）
-                    ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
-                    ctx.fillRect(box.xMin, box.yMin - 25, 100, 25);
-                    ctx.fillStyle = '#000';
-                    ctx.font = 'bold 16px Arial';
-                    ctx.fillText('顔検出 ✓', box.xMin + 5, box.yMin - 8);
+                    if (frameCount % 60 === 0) {
+                        console.log(`📦 box座標 (xMin形式): (${boxX}, ${boxY}) ${boxWidth}x${boxHeight}`);
+                    }
                 } else if (box.x !== undefined && box.y !== undefined) {
                     // {x, y, width, height} 形式
-                    ctx.strokeRect(box.x, box.y, box.width, box.height);
+                    boxX = box.x;
+                    boxY = box.y;
+                    boxWidth = box.width;
+                    boxHeight = box.height;
+                    
+                    if (frameCount % 60 === 0) {
+                        console.log(`📦 box座標 (x形式): (${boxX}, ${boxY}) ${boxWidth}x${boxHeight}`);
+                    }
+                } else {
+                    if (frameCount % 60 === 0) {
+                        console.warn('⚠️ 不明なbox形式:', box);
+                    }
+                }
+                
+                // バウンディングボックスを描画
+                if (boxX !== undefined && boxY !== undefined && boxWidth > 0 && boxHeight > 0) {
+                    ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
                     
                     // ラベル表示（背景付き）
-                    ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
-                    ctx.fillRect(box.x, box.y - 25, 100, 25);
+                    const labelY = Math.max(30, boxY); // 画面上部に寄り過ぎないように調整
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
+                    ctx.fillRect(boxX, labelY - 30, 120, 30);
                     ctx.fillStyle = '#000';
-                    ctx.font = 'bold 16px Arial';
-                    ctx.fillText('顔検出 ✓', box.x + 5, box.y - 8);
+                    ctx.font = 'bold 18px Arial';
+                    ctx.fillText(`顔検出 #${faceIndex + 1}`, boxX + 5, labelY - 8);
+                    
+                    if (frameCount % 60 === 0) {
+                        console.log('✅ バウンディングボックス描画完了');
+                    }
+                } else {
+                    if (frameCount % 60 === 0) {
+                        console.warn('⚠️ バウンディングボックスの座標が無効です');
+                    }
                 }
             } else {
-                // バウンディングボックスがない場合、簡易的な表示
+                // バウンディングボックスがない場合、キーポイントから計算
                 if (face.keypoints && face.keypoints.length > 0) {
-                    ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
-                    ctx.fillRect(10, 100, 100, 25);
-                    ctx.fillStyle = '#000';
-                    ctx.font = 'bold 16px Arial';
-                    ctx.fillText('顔検出 ✓', 15, 117);
+                    if (frameCount % 60 === 0) {
+                        console.log('📦 box がないため、キーポイントから計算します');
+                    }
+                    
+                    // キーポイントから境界を計算
+                    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                    face.keypoints.forEach(kp => {
+                        if (kp.x !== undefined && kp.y !== undefined && !isNaN(kp.x) && !isNaN(kp.y)) {
+                            minX = Math.min(minX, kp.x);
+                            minY = Math.min(minY, kp.y);
+                            maxX = Math.max(maxX, kp.x);
+                            maxY = Math.max(maxY, kp.y);
+                        }
+                    });
+                    
+                    if (minX !== Infinity && minY !== Infinity && maxX !== -Infinity && maxY !== -Infinity) {
+                        const width = maxX - minX;
+                        const height = maxY - minY;
+                        
+                        ctx.strokeStyle = '#00ff00';
+                        ctx.lineWidth = 4;
+                        ctx.strokeRect(minX, minY, width, height);
+                        
+                        // ラベル
+                        const labelY = Math.max(30, minY);
+                        ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
+                        ctx.fillRect(minX, labelY - 30, 120, 30);
+                        ctx.fillStyle = '#000';
+                        ctx.font = 'bold 18px Arial';
+                        ctx.fillText(`顔検出 #${faceIndex + 1}`, minX + 5, labelY - 8);
+                        
+                        if (frameCount % 60 === 0) {
+                            console.log('✅ キーポイントから計算したbox描画完了');
+                        }
+                    }
+                } else {
+                    if (frameCount % 60 === 0) {
+                        console.warn('⚠️ box もキーポイントもありません');
+                    }
                 }
             }
             
