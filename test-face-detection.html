@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>顔検出テスト - Face Detection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+        #container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        #imageContainer {
+            position: relative;
+            margin: 20px 0;
+            display: inline-block;
+        }
+        #testImage {
+            max-width: 100%;
+            display: block;
+            border: 2px solid #ddd;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+        #status.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+        #status.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        #log {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            margin-top: 20px;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            vertical-align: middle;
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .info-box {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>🔍 顔検出テスト</h1>
+        
+        <div class="info-box">
+            <strong>📝 テスト内容:</strong><br>
+            • TensorFlow.js Face Landmarks Detection (MediaPipe FaceMesh) を使用<br>
+            • 提供された顔画像で顔検出をテスト<br>
+            • 検出された顔とキーポイントを可視化
+        </div>
+        
+        <div>
+            <button id="testBtn" disabled>🧪 顔検出を開始</button>
+            <button id="clearBtn">🗑️ ログをクリア</button>
+        </div>
+        
+        <div id="status">モデルを読み込み中...</div>
+        
+        <div>
+            <label for="imageUrl">画像URL:</label>
+            <input type="text" id="imageUrl" style="width: 80%; padding: 5px;" 
+                   value="https://www.biteki.com/wp-content/uploads/2023/10/230724_0258-1.jpg">
+            <button id="loadImageBtn">画像を読み込む</button>
+        </div>
+        
+        <div id="imageContainer">
+            <img id="testImage" style="display: none;" crossorigin="anonymous" alt="テスト画像">
+            <canvas id="canvas"></canvas>
+        </div>
+        
+        <h2>📋 詳細ログ</h2>
+        <div id="log">ログがここに表示されます...</div>
+    </div>
+
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0"></script>
+    <!-- Face Landmarks Detection -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.2"></script>
+
+    <script>
+        let faceDetector = null;
+        let logElement = document.getElementById('log');
+        let statusElement = document.getElementById('status');
+        let testBtn = document.getElementById('testBtn');
+        let clearBtn = document.getElementById('clearBtn');
+        let loadImageBtn = document.getElementById('loadImageBtn');
+        let imageUrlInput = document.getElementById('imageUrl');
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        let img = document.getElementById('testImage');
+        
+        // ログ出力関数
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString('ja-JP');
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : '📝';
+            logElement.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(`[${type}] ${message}`);
+        }
+        
+        // ステータス更新
+        function updateStatus(message, type = 'info') {
+            statusElement.textContent = message;
+            statusElement.className = type;
+        }
+        
+        // ログクリア
+        clearBtn.addEventListener('click', () => {
+            logElement.textContent = '';
+            log('ログをクリアしました');
+        });
+        
+        // 初期化
+        async function init() {
+            log('=== 初期化開始 ===');
+            
+            try {
+                // TensorFlow.jsの確認
+                log('TensorFlow.js バージョン: ' + tf.version.tfjs);
+                log('バックエンド初期化中...');
+                await tf.ready();
+                const backend = tf.getBackend();
+                log(`バックエンド: ${backend}`, 'success');
+                
+                // Face Landmarks Detection ライブラリの確認
+                if (typeof faceLandmarksDetection === 'undefined') {
+                    throw new Error('Face Landmarks Detection ライブラリが読み込まれていません');
+                }
+                log('Face Landmarks Detection ライブラリ: OK', 'success');
+                
+                // モデルの読み込み
+                updateStatus('顔検出モデルを読み込み中...');
+                log('MediaPipe FaceMesh モデルを読み込み中...');
+                
+                const startTime = Date.now();
+                
+                // オプション1: デフォルト設定でテスト
+                log('オプション1: デフォルト設定で読み込み');
+                try {
+                    faceDetector = await faceLandmarksDetection.createDetector(
+                        faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+                        {
+                            runtime: 'tfjs',
+                            refineLandmarks: false,
+                            maxFaces: 5
+                        }
+                    );
+                    const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
+                    log(`✅ モデル読み込み成功 (${loadTime}秒)`, 'success');
+                    log('モデルオブジェクト: ' + JSON.stringify(Object.keys(faceDetector)));
+                } catch (error) {
+                    log(`❌ モデル読み込み失敗: ${error.message}`, 'error');
+                    throw error;
+                }
+                
+                updateStatus('✅ 準備完了！「顔検出を開始」ボタンを押してください', 'success');
+                testBtn.disabled = false;
+                log('=== 初期化完了 ===', 'success');
+                
+            } catch (error) {
+                log(`初期化エラー: ${error.message}`, 'error');
+                log(`スタックトレース: ${error.stack}`, 'error');
+                updateStatus('❌ エラー: ' + error.message, 'error');
+            }
+        }
+        
+        // 顔検出テスト
+        async function testFaceDetection() {
+            log('=== 顔検出テスト開始 ===');
+            updateStatus('顔検出中...');
+            
+            try {
+                // 画像が読み込まれているか確認
+                if (!img.complete) {
+                    log('画像読み込み待機中...');
+                    await new Promise((resolve) => {
+                        img.onload = resolve;
+                    });
+                }
+                
+                log(`画像サイズ: ${img.naturalWidth} x ${img.naturalHeight}`);
+                
+                // キャンバスのサイズを画像に合わせる
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                canvas.style.width = img.width + 'px';
+                canvas.style.height = img.height + 'px';
+                
+                log('顔検出を実行中...');
+                const startTime = Date.now();
+                
+                // 顔検出の実行
+                const faces = await faceDetector.estimateFaces(img, {
+                    flipHorizontal: false
+                });
+                
+                const detectTime = Date.now() - startTime;
+                log(`検出処理時間: ${detectTime}ms`);
+                log(`検出された顔の数: ${faces ? faces.length : 0}`);
+                
+                if (faces && faces.length > 0) {
+                    log(`✅ 顔検出成功！${faces.length}個の顔を検出`, 'success');
+                    
+                    // 各顔の詳細を出力
+                    faces.forEach((face, index) => {
+                        log(`\n--- 顔 #${index + 1} ---`);
+                        log(`プロパティ: ${Object.keys(face).join(', ')}`);
+                        
+                        // box プロパティ
+                        if (face.box) {
+                            log(`box: ${JSON.stringify(face.box)}`);
+                        }
+                        
+                        // boundingBox プロパティ
+                        if (face.boundingBox) {
+                            log(`boundingBox: ${JSON.stringify(face.boundingBox)}`);
+                        }
+                        
+                        // keypoints
+                        if (face.keypoints) {
+                            log(`キーポイント数: ${face.keypoints.length}`);
+                            if (face.keypoints.length > 0) {
+                                log(`最初のキーポイント: ${JSON.stringify(face.keypoints[0])}`);
+                            }
+                        }
+                    });
+                    
+                    // 顔を描画
+                    drawFaces(faces);
+                    updateStatus(`✅ 成功！${faces.length}個の顔を検出しました`, 'success');
+                    
+                } else {
+                    log('❌ 顔が検出されませんでした', 'error');
+                    updateStatus('⚠️ 顔が検出されませんでした', 'error');
+                }
+                
+                log('=== 顔検出テスト完了 ===');
+                
+            } catch (error) {
+                log(`顔検出エラー: ${error.message}`, 'error');
+                log(`スタックトレース: ${error.stack}`, 'error');
+                updateStatus('❌ エラー: ' + error.message, 'error');
+            }
+        }
+        
+        // 顔の描画
+        function drawFaces(faces) {
+            log('顔の描画を開始...');
+            
+            // キャンバスをクリア
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            faces.forEach((face, index) => {
+                log(`顔 #${index + 1} を描画中...`);
+                
+                // バウンディングボックスの描画
+                const box = face.box || face.boundingBox;
+                if (box) {
+                    ctx.strokeStyle = '#00ff00';
+                    ctx.lineWidth = 4;
+                    
+                    if (box.xMin !== undefined && box.yMin !== undefined) {
+                        // {xMin, yMin, width, height} または {xMin, yMin, xMax, yMax} 形式
+                        const width = box.width || (box.xMax - box.xMin);
+                        const height = box.height || (box.yMax - box.yMin);
+                        ctx.strokeRect(box.xMin, box.yMin, width, height);
+                        
+                        // ラベル
+                        ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                        ctx.fillRect(box.xMin, box.yMin - 30, 120, 30);
+                        ctx.fillStyle = '#000';
+                        ctx.font = 'bold 18px Arial';
+                        ctx.fillText(`顔 #${index + 1}`, box.xMin + 5, box.yMin - 8);
+                        
+                        log(`box描画: (${box.xMin}, ${box.yMin}) ${width}x${height}`);
+                    } else if (box.x !== undefined && box.y !== undefined) {
+                        // {x, y, width, height} 形式
+                        ctx.strokeRect(box.x, box.y, box.width, box.height);
+                        
+                        // ラベル
+                        ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                        ctx.fillRect(box.x, box.y - 30, 120, 30);
+                        ctx.fillStyle = '#000';
+                        ctx.font = 'bold 18px Arial';
+                        ctx.fillText(`顔 #${index + 1}`, box.x + 5, box.y - 8);
+                        
+                        log(`box描画: (${box.x}, ${box.y}) ${box.width}x${box.height}`);
+                    }
+                }
+                
+                // キーポイントの描画
+                if (face.keypoints && Array.isArray(face.keypoints)) {
+                    log(`キーポイント ${face.keypoints.length}個を描画中...`);
+                    
+                    // 全キーポイントを小さな点で描画
+                    face.keypoints.forEach((kp, idx) => {
+                        if (kp.x !== undefined && kp.y !== undefined && 
+                            !isNaN(kp.x) && !isNaN(kp.y)) {
+                            ctx.beginPath();
+                            ctx.arc(kp.x, kp.y, 2, 0, 2 * Math.PI);
+                            ctx.fillStyle = '#00ffff';
+                            ctx.fill();
+                        }
+                    });
+                    
+                    // 主要な顔のパーツを描画
+                    drawFacialFeatures(face.keypoints);
+                    
+                    log(`✅ キーポイント描画完了`);
+                }
+            });
+            
+            log('顔の描画完了', 'success');
+        }
+        
+        // 主要な顔のパーツを描画
+        function drawFacialFeatures(keypoints) {
+            // MediaPipe FaceMesh の主要な特徴点インデックス
+            const features = {
+                leftEye: [33, 133, 157, 158, 159, 160, 161, 163, 144, 145, 153, 154, 155],
+                rightEye: [362, 263, 387, 386, 385, 384, 398, 373, 374, 380, 381, 382],
+                leftEyebrow: [70, 63, 105, 66, 107, 55, 65, 52, 53, 46],
+                rightEyebrow: [300, 293, 334, 296, 336, 285, 295, 282, 283, 276],
+                nose: [1, 2, 98, 327],
+                lips: [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 185, 40, 39, 37, 0, 267, 269, 270, 409],
+                faceOval: [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109]
+            };
+            
+            // 各パーツを描画
+            drawFeaturePath(keypoints, features.leftEye, '#00ffff', true);
+            drawFeaturePath(keypoints, features.rightEye, '#00ffff', true);
+            drawFeaturePath(keypoints, features.leftEyebrow, '#ffff00', false);
+            drawFeaturePath(keypoints, features.rightEyebrow, '#ffff00', false);
+            drawFeaturePath(keypoints, features.nose, '#ff00ff', false);
+            drawFeaturePath(keypoints, features.lips, '#ff0000', true);
+            drawFeaturePath(keypoints, features.faceOval, '#00ff00', false);
+        }
+        
+        // 特徴点を線で結ぶ
+        function drawFeaturePath(keypoints, indices, color, closed) {
+            if (indices.length < 2) return;
+            
+            try {
+                ctx.beginPath();
+                const firstPoint = keypoints[indices[0]];
+                if (!firstPoint || firstPoint.x === undefined || firstPoint.y === undefined) {
+                    return;
+                }
+                ctx.moveTo(firstPoint.x, firstPoint.y);
+                
+                for (let i = 1; i < indices.length; i++) {
+                    const point = keypoints[indices[i]];
+                    if (point && point.x !== undefined && point.y !== undefined) {
+                        ctx.lineTo(point.x, point.y);
+                    }
+                }
+                
+                if (closed) {
+                    ctx.closePath();
+                }
+                
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                
+                // 各ポイントを強調表示
+                indices.forEach(index => {
+                    const point = keypoints[index];
+                    if (point && point.x !== undefined && point.y !== undefined) {
+                        ctx.beginPath();
+                        ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
+                        ctx.fillStyle = color;
+                        ctx.fill();
+                    }
+                });
+            } catch (error) {
+                console.error('drawFeaturePath エラー:', error);
+            }
+        }
+        
+        // 画像読み込みボタン
+        loadImageBtn.addEventListener('click', () => {
+            const url = imageUrlInput.value.trim();
+            if (!url) {
+                updateStatus('❌ 画像URLを入力してください', 'error');
+                return;
+            }
+            
+            log('画像を読み込み中: ' + url);
+            updateStatus('画像を読み込み中...');
+            
+            img.onload = () => {
+                log('✅ 画像読み込み完了', 'success');
+                img.style.display = 'block';
+                
+                // キャンバスのサイズを画像に合わせる
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                canvas.style.width = img.width + 'px';
+                canvas.style.height = img.height + 'px';
+                
+                updateStatus('✅ 画像読み込み完了。「顔検出を開始」ボタンを押してください', 'success');
+            };
+            
+            img.onerror = () => {
+                log('❌ 画像の読み込みに失敗しました', 'error');
+                updateStatus('❌ 画像の読み込みに失敗。CORS制限またはURLが無効です', 'error');
+            };
+            
+            img.src = url;
+        });
+        
+        // テストボタンのイベントリスナー
+        testBtn.addEventListener('click', testFaceDetection);
+        
+        // 初期化を実行
+        init();
+    </script>
+</body>
+</html>
