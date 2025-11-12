@@ -134,6 +134,21 @@
             z-index: 10;
         }
         
+        #debug-info {
+            position: absolute;
+            top: 50px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            color: #00ff00;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 10;
+            max-width: 400px;
+            display: none;
+        }
+        
         #cache-status {
             position: absolute;
             top: 10px;
@@ -260,6 +275,7 @@
             <div id="fps">0 FPS</div>
             <div id="cache-status" class="downloading">📦 ダウンロード中...</div>
             <div id="version">v1.0.0</div>
+            <div id="debug-info">デバッグ情報</div>
             <video id="video" playsinline autoplay></video>
             <canvas id="canvas"></canvas>
         </div>
@@ -281,8 +297,8 @@
     <!-- アプリバージョン管理 -->
     <script>
         // バージョン番号（更新時にインクリメント）
-        const APP_VERSION = '1.2.0-debug';
-        const BUILD_DATE = '2025-11-11 (顔ランドマーク修正版)';
+        const APP_VERSION = '1.2.1-debug';
+        const BUILD_DATE = '2025-11-12 (顔検出デバッグ強化版)';
     </script>
     
     <!-- Service Worker の登録 -->
@@ -385,6 +401,7 @@
         const progressContainer = document.getElementById('progress-container');
         const progressFill = document.getElementById('progress-fill');
         const progressText = document.getElementById('progress-text');
+        const debugInfo = document.getElementById('debug-info');
         
         // バージョン表示を更新
         if (versionDisplay) {
@@ -681,6 +698,7 @@
                 // 現在のモードに応じて検出
                 if (detectionMode === 'pose') {
                     // 体検出
+                    debugInfo.style.display = 'none'; // デバッグ情報を非表示
                     const poses = await currentDetector.estimatePoses(video);
                     if (poses && poses.length > 0) {
                         drawPose(poses[0]);
@@ -688,19 +706,35 @@
                 } else {
                     // 顔検出
                     const faces = await currentDetector.estimateFaces(video);
+                    
+                    // デバッグ情報を画面に表示
                     if (faces && faces.length > 0) {
-                        // デバッグ: 顔のデータ構造を確認
-                        if (frameCount % 30 === 0) { // 30フレームごとにログ
+                        const face = faces[0];
+                        debugInfo.style.display = 'block';
+                        debugInfo.innerHTML = `
+                            ✅ 顔検出: ${faces.length}個<br>
+                            キーポイント: ${face.keypoints ? face.keypoints.length : 0}個<br>
+                            box: ${face.box ? 'あり' : 'なし'}<br>
+                            boundingBox: ${face.boundingBox ? 'あり' : 'なし'}<br>
+                            プロパティ: ${Object.keys(face).join(', ')}
+                        `;
+                        
+                        // コンソールにも詳細を出力（30フレームごと）
+                        if (frameCount % 30 === 0) {
                             console.log('✅ 顔検出:', faces.length, '個の顔');
-                            console.log('顔データ構造:', faces[0]);
-                            if (faces[0].keypoints) {
-                                console.log('キーポイント数:', faces[0].keypoints.length);
-                                console.log('最初のキーポイント:', faces[0].keypoints[0]);
+                            console.log('顔データ構造:', face);
+                            if (face.keypoints && face.keypoints.length > 0) {
+                                console.log('キーポイント数:', face.keypoints.length);
+                                console.log('最初のキーポイント:', face.keypoints[0]);
                             }
                         }
+                        
                         faces.forEach(face => drawFace(face));
                     } else {
                         // 顔が検出されない場合
+                        debugInfo.style.display = 'block';
+                        debugInfo.innerHTML = '❌ 顔が検出されていません';
+                        
                         if (frameCount % 60 === 0) {
                             console.log('⚠️ 顔が検出されませんでした');
                         }
@@ -782,19 +816,45 @@
                 console.log('🎨 drawFace呼び出し:', face);
             }
             
-            // バウンディングボックスの描画
-            if (face.box) {
-                const box = face.box;
+            // バウンディングボックスの描画（box または boundingBox プロパティを確認）
+            const box = face.box || face.boundingBox;
+            if (box) {
                 ctx.strokeStyle = '#00ff00';
                 ctx.lineWidth = 3;
-                ctx.strokeRect(box.xMin, box.yMin, box.width, box.height);
                 
-                // ラベル表示（背景付き）
-                ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
-                ctx.fillRect(box.xMin, box.yMin - 25, 100, 25);
-                ctx.fillStyle = '#000';
-                ctx.font = 'bold 16px Arial';
-                ctx.fillText('顔検出 ✓', box.xMin + 5, box.yMin - 8);
+                // box の形式に応じて描画を調整
+                if (box.xMin !== undefined && box.yMin !== undefined) {
+                    // {xMin, yMin, width, height} 形式
+                    const width = box.width || (box.xMax - box.xMin);
+                    const height = box.height || (box.yMax - box.yMin);
+                    ctx.strokeRect(box.xMin, box.yMin, width, height);
+                    
+                    // ラベル表示（背景付き）
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                    ctx.fillRect(box.xMin, box.yMin - 25, 100, 25);
+                    ctx.fillStyle = '#000';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.fillText('顔検出 ✓', box.xMin + 5, box.yMin - 8);
+                } else if (box.x !== undefined && box.y !== undefined) {
+                    // {x, y, width, height} 形式
+                    ctx.strokeRect(box.x, box.y, box.width, box.height);
+                    
+                    // ラベル表示（背景付き）
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                    ctx.fillRect(box.x, box.y - 25, 100, 25);
+                    ctx.fillStyle = '#000';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.fillText('顔検出 ✓', box.x + 5, box.y - 8);
+                }
+            } else {
+                // バウンディングボックスがない場合、簡易的な表示
+                if (face.keypoints && face.keypoints.length > 0) {
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                    ctx.fillRect(10, 100, 100, 25);
+                    ctx.fillStyle = '#000';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.fillText('顔検出 ✓', 15, 117);
+                }
             }
             
             // キーポイント（ランドマーク）の描画
