@@ -247,11 +247,13 @@
                     });
                 }
                 
-                log(`画像サイズ: ${img.naturalWidth} x ${img.naturalHeight}`);
+                log(`画像サイズ(natural): ${img.naturalWidth} x ${img.naturalHeight}`);
+                log(`画像サイズ(display): ${img.width} x ${img.height}`);
                 
-                // キャンバスのサイズを画像に合わせる
-                canvas.width = img.naturalWidth;
-                canvas.height = img.naturalHeight;
+                // キャンバスのサイズを画像の表示サイズに合わせる
+                // estimateFaces() は表示サイズの座標を返すため
+                canvas.width = img.width;
+                canvas.height = img.height;
                 canvas.style.width = img.width + 'px';
                 canvas.style.height = img.height + 'px';
                 
@@ -462,11 +464,15 @@
                 log('✅ 画像読み込み完了', 'success');
                 img.style.display = 'block';
                 
-                // キャンバスのサイズを画像に合わせる
-                canvas.width = img.naturalWidth;
-                canvas.height = img.naturalHeight;
-                canvas.style.width = img.width + 'px';
-                canvas.style.height = img.height + 'px';
+                // 画像の表示サイズが確定するまで少し待つ
+                setTimeout(() => {
+                    // キャンバスのサイズを画像の表示サイズに合わせる
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    canvas.style.width = img.width + 'px';
+                    canvas.style.height = img.height + 'px';
+                    log(`キャンバスサイズ: ${canvas.width} x ${canvas.height}`);
+                }, 100);
                 
                 updateStatus('✅ 画像読み込み完了。「顔検出を開始」ボタンを押してください', 'success');
             };
