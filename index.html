@@ -297,8 +297,8 @@
     <!-- アプリバージョン管理 -->
     <script>
         // バージョン番号（更新時にインクリメント）
-        const APP_VERSION = '1.2.1-debug';
-        const BUILD_DATE = '2025-11-12 (顔検出デバッグ強化版)';
+        const APP_VERSION = '1.2.2-face-detection-fix';
+        const BUILD_DATE = '2025-11-12 (顔検出修正版)';
     </script>
     
     <!-- Service Worker の登録 -->
@@ -523,19 +523,25 @@
                 updateProgress(75, '顔メッシュモデルをダウンロード中...');
                 
                 try {
+                    // MediaPipe FaceMesh の設定を改善
+                    console.log('[Init] 顔検出モデルを読み込み中...');
                     faceDetector = await withTimeout(
                         faceLandmarksDetection.createDetector(
                             faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
                             {
                                 runtime: 'tfjs',
-                                refineLandmarks: true,
-                                maxFaces: 1
+                                refineLandmarks: false,  // 軽量化のためfalseに変更
+                                maxFaces: 3,  // 最大3つの顔を検出
+                                detectorModelUrl: undefined,  // デフォルトのモデルを使用
+                                landmarksModelUrl: undefined  // デフォルトのモデルを使用
                             }
                         ),
                         120000,
                         '顔メッシュモデルのダウンロードがタイムアウトしました（120秒）。'
                     );
+                    console.log('[Init] ✅ 顔検出モデルの読み込み完了');
                 } catch (error) {
+                    console.error('[Init] ❌ 顔検出モデルの読み込み失敗:', error);
                     throw new Error('顔メッシュモデルの読み込みに失敗: ' + error.message);
                 }
                 
@@ -705,39 +711,65 @@
                     }
                 } else {
                     // 顔検出
-                    const faces = await currentDetector.estimateFaces(video);
-                    
-                    // デバッグ情報を画面に表示
-                    if (faces && faces.length > 0) {
-                        const face = faces[0];
-                        debugInfo.style.display = 'block';
-                        debugInfo.innerHTML = `
-                            ✅ 顔検出: ${faces.length}個<br>
-                            キーポイント: ${face.keypoints ? face.keypoints.length : 0}個<br>
-                            box: ${face.box ? 'あり' : 'なし'}<br>
-                            boundingBox: ${face.boundingBox ? 'あり' : 'なし'}<br>
-                            プロパティ: ${Object.keys(face).join(', ')}
-                        `;
+                    try {
+                        // ビデオの状態をチェック（60フレームごとにログ出力）
+                        if (frameCount % 60 === 0) {
+                            console.log('[Face Detection] ビデオ状態:', {
+                                readyState: video.readyState,
+                                videoWidth: video.videoWidth,
+                                videoHeight: video.videoHeight,
+                                paused: video.paused,
+                                currentTime: video.currentTime
+                            });
+                        }
                         
-                        // コンソールにも詳細を出力（30フレームごと）
-                        if (frameCount % 30 === 0) {
-                            console.log('✅ 顔検出:', faces.length, '個の顔');
-                            console.log('顔データ構造:', face);
-                            if (face.keypoints && face.keypoints.length > 0) {
-                                console.log('キーポイント数:', face.keypoints.length);
-                                console.log('最初のキーポイント:', face.keypoints[0]);
+                        // 顔検出を実行（エラーハンドリング付き）
+                        const faces = await currentDetector.estimateFaces(video, {
+                            flipHorizontal: false  // ミラー表示はCSS側で行っているためfalse
+                        });
+                        
+                        // デバッグ情報を画面に表示
+                        if (faces && faces.length > 0) {
+                            const face = faces[0];
+                            debugInfo.style.display = 'block';
+                            debugInfo.innerHTML = `
+                                ✅ 顔検出: ${faces.length}個<br>
+                                キーポイント: ${face.keypoints ? face.keypoints.length : 0}個<br>
+                                box: ${face.box ? 'あり' : 'なし'}<br>
+                                boundingBox: ${face.boundingBox ? 'あり' : 'なし'}<br>
+                                プロパティ: ${Object.keys(face).join(', ')}
+                            `;
+                            
+                            // コンソールにも詳細を出力（30フレームごと）
+                            if (frameCount % 30 === 0) {
+                                console.log('[Face Detection] ✅ 顔検出成功:', faces.length, '個の顔');
+                                console.log('[Face Detection] 顔データ構造:', face);
+                                if (face.keypoints && face.keypoints.length > 0) {
+                                    console.log('[Face Detection] キーポイント数:', face.keypoints.length);
+                                    console.log('[Face Detection] 最初のキーポイント:', face.keypoints[0]);
+                                }
+                            }
+                            
+                            faces.forEach(face => drawFace(face));
+                        } else {
+                            // 顔が検出されない場合
+                            debugInfo.style.display = 'block';
+                            debugInfo.innerHTML = `
+                                ❌ 顔が検出されていません<br>
+                                ビデオ: ${video.videoWidth}x${video.videoHeight}<br>
+                                readyState: ${video.readyState}<br>
+                                <small>明るい場所で顔を正面に向けてください</small>
+                            `;
+                            
+                            if (frameCount % 60 === 0) {
+                                console.log('[Face Detection] ⚠️ 顔が検出されませんでした');
+                                console.log('[Face Detection] ビデオサイズ:', video.videoWidth, 'x', video.videoHeight);
                             }
                         }
-                        
-                        faces.forEach(face => drawFace(face));
-                    } else {
-                        // 顔が検出されない場合
+                    } catch (error) {
+                        console.error('[Face Detection] ❌ 顔検出エラー:', error);
                         debugInfo.style.display = 'block';
-                        debugInfo.innerHTML = '❌ 顔が検出されていません';
-                        
-                        if (frameCount % 60 === 0) {
-                            console.log('⚠️ 顔が検出されませんでした');
-                        }
+                        debugInfo.innerHTML = `❌ エラー: ${error.message}`;
                     }
                 }
                 
